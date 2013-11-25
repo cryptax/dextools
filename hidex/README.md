@@ -10,5 +10,7 @@
       ./src			  sources of the app - DEX needs to
       				  be patched to hide thisishidden()
 
+      ./hidex.pl		  script to hide/unhide/detect hidden methods				 
+
 
 Code is released using the Open Source BSD 2-Clause License (http://opensource.org/licenses/BSD-2-Clause)
