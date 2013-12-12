@@ -284,7 +284,7 @@ sub get_string {
     seek($fh, $string_data_off, 0);
     my $string_size = read_uleb128(\*FILE);
     #print "String size: $string_size\n";
-    read($fh, $data, $string_size) or die "cant read string: $!";
+    read($fh, $data, $string_size) or return "ERROR: CAN'T READ DATA";
 
     return $data;
 
@@ -312,7 +312,7 @@ sub get_method_name {
     seek($fh, $dex->{method_ids_offset}, 0);
     seek($fh, 8*$idx, 1);
     seek($fh, 4, 1); #skip class idx and proto idx
-    read($fh, $data, 4) or die "cant read descriptor: $!";
+    read($fh, $data, 4) or return 'ERROR GETTING METHOD NAME';
     my $name_idx = unpack('L', $data);
 
     return get_string($fh, $name_idx);
