@@ -12,5 +12,7 @@
 
       ./hidex.pl		  script to hide/unhide/detect hidden methods				 
 
+      ./nonreferenced-methods.sh helper script to detect hidden methods. Perform baksmali on DEX file first.
+
 
 Code is released using the Open Source BSD 2-Clause License (http://opensource.org/licenses/BSD-2-Clause)

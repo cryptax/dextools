@@ -354,15 +354,14 @@ sub check_code_offset {
     # basic offset checking. 
     if ($offset <= 0) {
 	printf("Class: $class_name Method: $method_name Position: 0x%X\n", $position);
-	print "WARNING: NULL CODE OFFSET\n";
-	print "WARNING: Possible attempt to hide a method\n";
+	print "null code offset detected (abstract or .. hidden method?)\n";
+	# this is either an attempt to hide a method or an abstract method 
     }
 
     # to do: check that offset is in data section
     if (is_offset_referenced($offset) eq 1) {
 	printf("Class: $class_name Method: $method_name Position: 0x%X\n", $position);
 	printf("WARNING: Code offset 0x%X ALREADY REFERENCED\n", $offset);
-	print "WARNING: Possible attempt to hide a method\n";
     } else {
 	unshift( @referenced_code_offset, $offset );
     }
@@ -378,8 +377,8 @@ sub check_method_idx {
 
     if ($method_idx_diff <= 0) {
 	printf("Class: $class_name Method: $method_name Position: 0x%X\n", $position);
-	print "WARNING: NULL METHOD IDX DIFF\n";
-	print "WARNING: Possible attempt to hide a method\n";
+	print "null method idx diff detected (single method .. or hidden?)\n";
+	# this is either a hidden method, or the single method of that type for that class
     }
 
     # checking for duplicate entries
@@ -424,7 +423,8 @@ sub check_missing_method_idx {
 		($search_class eq $class_name && $search_method eq '') ||
 		($search_class eq $class_name && $search_method eq $method_name)) {  
 	    
-		print "WARNING: Method idx: $count Class: $class_name Name: $method_name is NEVER REFERENCED\n";
+		print "Method idx: $count Class: $class_name Name: $method_name is never referenced\n";
+		# this is either because it is just used (not implemented) or ... hidden
 	    }
 
 	    seek($fh, $saved_position, 0);
