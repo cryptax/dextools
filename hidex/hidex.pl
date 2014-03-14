@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# Copyright (c) 2013, A. Apvrille
+# Copyright (c) 2013, 2014, A. Apvrille
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
@@ -31,18 +31,20 @@ my $patch_method_idx_diff;
 my $patch_next_method_idx_diff;
 my $patch_string_offset;
 my $patch_string_data;
+my $show_strings;
 
 my @referenced_method_idx;
 my @referenced_code_offset;
 
 sub usage {
     print "=== Hiding/Unhiding with DEX files ===\n";
-    print "Copyright (c) 2013, A. Apvrille\n";
+    print "Copyright (c) 2013, 2014, A. Apvrille\n";
     print "http://opensource.org/licenses/BSD-2-Clause\n";
     print "\n";
     print "Usage:\n";
-    print "./hidex.pl --input <filename>\n\t[--detect]\n\t[--patch-string-offset HEX --patch-string-data HEX]\n\t[--patch-offset HEX --patch-idx HEX --patch-code HEX --patch-flag HEX --patch-next-idx HEX]\n\t[--class classname [--method methodname]]\n";
+    print "./hidex.pl --input <filename>\n\t[--show-strings]\n\t[--detect]\n\t[--patch-string-offset HEX --patch-string-data HEX]\n\t[--patch-offset HEX --patch-idx HEX --patch-code HEX --patch-flag HEX --patch-next-idx HEX]\n\t[--class classname [--method methodname]]\n";
     print "\t--input filename  file to analyze.\n";
+    print "\t--show-strings show all strings.\n";
     print "\t--detect          detects possible attempts to hide a method.\n";
     print "\tExample: ./hidex.pl --input classes.dex --detect\n\n";
     print "\t--class classname Restrict display of layout to only this class.\n";
@@ -354,12 +356,13 @@ sub check_code_offset {
     # basic offset checking. 
     if ($offset <= 0) {
 	printf("Class: $class_name Method: $method_name Position: 0x%X\n", $position);
-	print "null code offset detected (abstract or .. hidden method?)\n";
+	print "null code offset detected (interface/abstract or .. hidden method?)\n";
 	# this is either an attempt to hide a method or an abstract method 
     }
 
     # to do: check that offset is in data section
-    if (is_offset_referenced($offset) eq 1) {
+    if (is_offset_referenced($offset) eq 1 && $offset != 0) {
+	# null code offset meaningless
 	printf("Class: $class_name Method: $method_name Position: 0x%X\n", $position);
 	printf("WARNING: Code offset 0x%X ALREADY REFERENCED\n", $offset);
     } else {
@@ -377,8 +380,7 @@ sub check_method_idx {
 
     if ($method_idx_diff <= 0) {
 	printf("Class: $class_name Method: $method_name Position: 0x%X\n", $position);
-	print "null method idx diff detected (single method .. or hidden?)\n";
-	# this is either a hidden method, or the single method of that type for that class
+	print "WARNING: method_idx_diff <= 0 detected\n";
     }
 
     # checking for duplicate entries
@@ -508,7 +510,9 @@ sub read_class_def {
 
 		if ($detect_flag) {
 		    check_code_offset($class_name, $method_name, $position, $code_off);
-		    check_method_idx($class_name, $method_name, $position, $method_idx, $method_idx_diff);
+		    if ($code_off > 0) {
+			check_method_idx($class_name, $method_name, $position, $method_idx, $method_idx_diff);
+		    }
 		}
 	    }
 	    seek($fh, $saved_position, 0);
@@ -539,7 +543,9 @@ sub read_class_def {
 		printf( "     idx_diff   = %d\n", $method_idx_diff);
 		if ($detect_flag) {
 		    check_code_offset($class_name, $method_name, $position, $code_off);
-		    check_method_idx($class_name, $method_name, $position, $method_idx, $method_idx_diff);
+		    if ($code_off > 0) {
+			check_method_idx($class_name, $method_name, $position, $method_idx, $method_idx_diff);
+		    }
 		}
 	    }
 	    seek($fh, $saved_position, 0);
@@ -585,6 +591,23 @@ sub patch_string {
     print( $fh pack( "S*", $patch_string_data ) );
 }
 
+sub read_all_strings {
+    my $fh = shift;
+    
+    for my $count (0 .. $dex->{string_ids_size}-1) {
+	my $data;
+	seek($fh, $dex->{string_ids_offset}, 0);
+	seek($fh, 4*$count, 1);
+	read($fh, $data, 4) or die "cant read string data offset: $!";
+	my $string_data_off = unpack('L', $data);
+	seek($fh, $string_data_off, 0);
+	my $string_size = read_uleb128(\*FILE);
+	read($fh, $data, $string_size) or return "ERROR: CAN'T READ DATA";
+	print "string[$count] -> offset: $string_data_off, value: $data\n";
+    }
+}
+
+
 # -------------- Main ------------------
 usage if (! GetOptions('help|?' => \$help,
 		       'detect|d' => \$detect,
@@ -595,6 +618,7 @@ usage if (! GetOptions('help|?' => \$help,
 		       'patch-idx=s' => \$patch_method_idx_diff,
 		       'patch-string-offset=s' => \$patch_string_offset,
 		       'patch-string-data=s' => \$patch_string_data,
+		       'show-strings' => \$show_strings,
 		       'method|m=s' => \$methodname,
 		       'class|c=s' => \$classname,
 		       'input|i=s' => \$dex->{filename} )
@@ -610,6 +634,9 @@ read_class_def(\*FILE, $dex->{class_defs_offset}, $dex->{class_defs_size}, $clas
 print "\n";
 if (defined $detect && ($detect eq 1)) {
     check_missing_method_idx(\*FILE, $classname, $methodname);
+}
+if (defined $show_strings) {
+    read_all_strings(\*FILE);
 }
 close( FILE );
 
