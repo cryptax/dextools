@@ -279,7 +279,7 @@ sub get_string {
 
     seek($fh, $dex->{string_ids_offset}, 0);
     seek($fh, 4*$idx, 1);
-    read($fh, $data, 4) or die "cant read string data offset: $!";
+    read($fh, $data, 4) or die "cant read string data offset: $! - string ids offset: $dex->{string_ids_offset} idx=$idx";
     my $string_data_off = unpack('L', $data);
     #print "string data off: $string_data_off\n";
     
@@ -458,6 +458,11 @@ sub read_class_def {
 	    print "Class_def[".$count."]:\n";
 	    printf(" class idx         = %s (0x%X)\n", $class_name, $class_idx);
 	    print " class data offset = $class_data_off\n";
+	}
+
+	if ($class_data_off <= 0) {
+	    print "No class data for this class\n";
+	    next;
 	}
 
 	# now read class_data_item
