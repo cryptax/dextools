@@ -32,6 +32,8 @@ my $patch_next_method_idx_diff;
 my $patch_string_offset;
 my $patch_string_data;
 my $show_strings;
+my $add_link_data;
+my $add_link_len;
 
 my @referenced_method_idx;
 my @referenced_code_offset;
@@ -63,6 +65,8 @@ sub usage {
     print "\n";
     print "\t--patch-string-offset HEX\n";
     print "\t--patch-string-data HEX\n";
+    print "\t--add-link HEXSTRING: adds this string in the link section. The string is hexa bytes.\n";
+    print "\tExample: ./hidex.pl --input classes.dex --add-link '01020304'\n";
     exit(0);
 }
 
@@ -243,7 +247,19 @@ sub read_dexheader {
     $dex->{sha1} = get_sha1( \*FILE, $filename );
     read( $fh, $data, 4) or die "cant read file size from file: $!";
     $dex->{filesize} = unpack('L', $data);
-    seek( $fh, 5*4, 1); # skip next 20 bytes
+    read( $fh, $data, 4) or die "cant read header size from file: $!";
+    $dex->{headersize} = unpack('L', $data);
+    if ($dex->{headersize} != 0x70) {
+	printf("WARNING: strange header size: %d\n", $dex->{headersize});
+    }
+    seek( $fh, 4, 1); # skip endianess
+    read( $fh, $data, 4) or die "cant read link_size from file: $!";
+    $dex->{link_size} = unpack('L', $data);
+    read( $fh, $data, 4) or die "cant read link_off from file: $!";
+    $dex->{link_offset} = unpack('L', $data);
+    read( $fh, $data, 4) or die "cant read map_off from file: $!";
+    $dex->{map_offset} = unpack('L', $data);
+
     read( $fh, $data, 4) or die "cant read string ids size from file: $!";
     $dex->{string_ids_size} = unpack('L', $data);
     read( $fh, $data, 4) or die "cant read string ids offset from file: $!";
@@ -266,6 +282,8 @@ sub read_dexheader {
     print "Magic     : $dex->{magic}\n";
     print "Checksum  : $dex->{checksum}\n";
     print "SHA1      : $dex->{sha1}\n";
+    printf("link: offset=0x%X (%d), size=%d\n", $dex->{link_offset}, $dex->{link_offset}, $dex->{link_size});
+    printf("map offset=0x%X (%d)\n", $dex->{map_offset}, $dex->{map_offset});
     printf("string_ids: offset=0x%X (%d), size=%d\n", $dex->{string_ids_offset}, $dex->{string_ids_offset}, $dex->{string_ids_size}, $dex->{string_ids_size});
     printf("type_ids  : offset=0x%X (%d), size=%d\n", $dex->{type_ids_offset}, $dex->{type_ids_offset}, $dex->{type_ids_size}, $dex->{type_ids_size});
     printf("method_ids: offset=0x%X (%d), size=%d\n", $dex->{method_ids_offset}, $dex->{method_ids_offset}, $dex->{method_ids_size}, $dex->{method_ids_size});
@@ -612,6 +630,36 @@ sub read_all_strings {
     }
 }
 
+sub add_link {
+    my $fh = shift;
+    my $link_data = shift;
+
+    my @hex    = ($link_data =~ /(..)/g);
+    my @dec    = map { hex($_) } @hex;
+    my @link_bytes  = map { pack('C', $_) } @dec;
+    my $link_size = $#link_bytes +1;
+
+    $dex->{link_offset} = $dex->{filesize};
+    $dex->{link_size} = $link_size;
+    $dex->{filesize} += $link_size;
+
+    # patch filesize
+    seek($fh, 8+4+20, 0);
+    printf "New filesize: 0x%X (%d)\n", $dex->{filesize}, $dex->{filesize};
+    print( $fh pack( "I*", $dex->{filesize} ));
+
+    # patch link size
+    seek($fh, 8, 1);
+    printf "Link size: %d at offset 0x%X (%d)\n", $dex->{link_size}, $dex->{link_offset}, $dex->{link_offset};
+    print( $fh pack( "I*", $dex->{link_size} ));
+    print( $fh pack( "I*", $dex->{link_offset} ));
+
+    # put link
+    print "Writing link data: $link_data\n";
+    seek($fh, $dex->{link_offset}, 0);
+    print($fh @link_bytes);
+}
+
 
 # -------------- Main ------------------
 usage if (! GetOptions('help|?' => \$help,
@@ -623,6 +671,7 @@ usage if (! GetOptions('help|?' => \$help,
 		       'patch-idx=s' => \$patch_method_idx_diff,
 		       'patch-string-offset=s' => \$patch_string_offset,
 		       'patch-string-data=s' => \$patch_string_data,
+		       'add-link-data|a=s' => \$add_link_data,
 		       'show-strings' => \$show_strings,
 		       'method|m=s' => \$methodname,
 		       'class|c=s' => \$classname,
@@ -646,11 +695,16 @@ if (defined $show_strings) {
 close( FILE );
 
 if ((defined $patch_string_offset && defined $patch_string_data) ||
+    (defined $add_link_data) ||
     (defined $patch_offset && defined $patch_access_flags && 
      defined $patch_code_offset && defined $patch_method_idx_diff)) {
     print "Patching DEX...\n";
     open( FILE, "+<$dex->{filename}" ) or die "cant open file '$dex->{filename}': $!";
     binmode FILE, ":bytes";
+
+    if (defined $add_link_data) {
+	add_link(\*FILE, $add_link_data);
+    }
 
     if (defined $patch_string_offset && defined $patch_string_data) {
 	patch_string(\*FILE, $patch_string_offset, $patch_string_data);
@@ -676,6 +730,8 @@ if ((defined $patch_string_offset && defined $patch_string_data) ||
 
     close( FILE );
 }
+
+
 
 
 
