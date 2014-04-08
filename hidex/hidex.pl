@@ -617,6 +617,8 @@ sub patch_string {
 sub read_all_strings {
     my $fh = shift;
     
+    print "Reading strings: size=$dex->{string_ids_size}\n";
+    
     for my $count (0 .. $dex->{string_ids_size}-1) {
 	my $data;
 	seek($fh, $dex->{string_ids_offset}, 0);
@@ -625,7 +627,8 @@ sub read_all_strings {
 	my $string_data_off = unpack('L', $data);
 	seek($fh, $string_data_off, 0);
 	my $string_size = read_uleb128(\*FILE);
-	read($fh, $data, $string_size) or return "ERROR: CAN'T READ DATA";
+	read($fh, $data, $string_size) or warn "ERROR: can't read string[$count] at offset $string_data_off";
+
 	print "string[$count] -> offset: $string_data_off, value: $data\n";
     }
 }
