@@ -32,6 +32,7 @@ my $patch_next_method_idx_diff;
 my $patch_string_offset;
 my $patch_string_data;
 my $show_strings;
+my $rename_strings;
 my $add_link_data;
 my $add_link_len;
 
@@ -44,9 +45,10 @@ sub usage {
     print "http://opensource.org/licenses/BSD-2-Clause\n";
     print "\n";
     print "Usage:\n";
-    print "./hidex.pl --input <filename>\n\t[--show-strings]\n\t[--detect]\n\t[--patch-string-offset HEX --patch-string-data HEX]\n\t[--patch-offset HEX --patch-idx HEX --patch-code HEX --patch-flag HEX --patch-next-idx HEX]\n\t[--class classname [--method methodname]]\n";
+    print "./hidex.pl --input <filename>\n\t[--show-strings]\n\t[--rename-strings]\n\t[--detect]\n\t[--patch-string-offset HEX --patch-string-data HEX]\n\t[--patch-offset HEX --patch-idx HEX --patch-code HEX --patch-flag HEX --patch-next-idx HEX]\n\t[--class classname [--method methodname]]\n";
     print "\t--input filename  file to analyze.\n";
     print "\t--show-strings show all strings.\n";
+    print "\t--rename-strings rename non printable strings in the DEX. Beware, this breaks the DEX because strings arent properly ordered after this.\n";
     print "\t--detect          detects possible attempts to hide a method.\n";
     print "\tExample: ./hidex.pl --input classes.dex --detect\n\n";
     print "\t--class classname Restrict display of layout to only this class.\n";
@@ -616,8 +618,16 @@ sub patch_string {
 
 sub read_all_strings {
     my $fh = shift;
-    
-    print "Reading strings: size=$dex->{string_ids_size}\n";
+    my $rename = shift;
+
+    if ($rename) {
+	print "Renaming strings: size=$dex->{string_ids_size}\n";
+    } else {
+	print "Reading strings: size=$dex->{string_ids_size}\n";
+    }
+
+    my $letter = 0x30;
+    my @replacement; # list of new replacement strings we use
     
     for my $count (0 .. $dex->{string_ids_size}-1) {
 	my $data;
@@ -626,10 +636,78 @@ sub read_all_strings {
 	read($fh, $data, 4) or die "cant read string data offset: $!";
 	my $string_data_off = unpack('L', $data);
 	seek($fh, $string_data_off, 0);
-	my $string_size = read_uleb128(\*FILE);
-	read($fh, $data, $string_size) or warn "ERROR: can't read string[$count] at offset $string_data_off";
+	my $utf16_units = read_uleb128(\*FILE);
+	my $pos = tell($fh);
+	read($fh, $data, $utf16_units) or warn "ERROR: can't read string[$count] at offset $string_data_off";
+	
+	# when strings are UTF8, 1 byte = 1 character, and then a 0x00 immediately follows
+	# but that's not true if you have UTF16 characters!
+	# DEX format says: "size of this string, in UTF-16 code units"
+	my $more_char;
+	my $string_nb_of_bytes = 0;
+	read($fh, $more_char, 1);
+	my $more_char_byte = unpack( "c", $more_char );
+	while ($more_char_byte != 0x00) {
+	    $data .= $more_char;
+	    $string_nb_of_bytes ++;
+	    read($fh, $more_char, 1);
+	    $more_char_byte = unpack( "c", $more_char );
+	}
 
-	print "string[$count] -> offset: $string_data_off, value: $data\n";
+	if ($rename && $data =~ /[^\x20-\x7e]/ && $utf16_units > 0) {
+	    # beware, this string renaming breaks the string ordering 
+	    # the DEX will no longer be valid
+
+	    # we will just replace the non-printable characters with dummy ones
+	    my $new_data = $data;
+	    $new_data =~ s/[^\x20-\x7e]/U/g; #each UTF16 is replaced by two ascii
+
+	    for my $element (@replacement) {
+		if ($element eq $new_data) {
+		    # This string constant already exist, we must choose another one
+		    # We'll be using another replacement letter ($letter)
+		    # TO FIX: if we go beyond 0x7e, we'll be using non printable characters again...
+		    $letter++; 
+
+		    if ($letter == 0x3a) {
+			$letter = 0x41; # skipping punctuation characters
+		    }
+		    $new_data =~ s/U/chr($letter)/eg; # that's a bit buggy if there are other Us in the string
+		    # print "string[$count]: duplicate found -> we changed: $new_data\n";
+		}
+	    }
+	    unshift(@replacement, $new_data);    
+
+	    printf( "Replacing string[%d] @ offset=0x%x, utf16-units=%d, str_bytes=%d old value=%s -> new value=%s\n",
+		    $count, $string_data_off, $utf16_units, 
+		    $string_nb_of_bytes+$utf16_units, 
+		    $data, 
+		    $new_data);
+
+	    my $desired_len = $utf16_units + $string_nb_of_bytes;
+	    if (length($new_data) != $desired_len) {
+		# unexpected situation or bug :(
+		print "Oops: something is wrong\n";
+		exit(0);
+	    }
+
+	    # we are not modifying the utf16_unit size
+	    seek($fh, $pos, 0);
+	    
+	    # write the renamed string
+	    for (my $i=0; $i<$desired_len; $i++) {
+		print( $fh substr($new_data, $i, 1)) or die "cant write renamed string: $!";
+	    }
+
+	    # normally, we should not need to write this one, it should already be at the right place
+	    print( $fh pack("C", 0x00)) or die "cant write byte: $!";
+	}
+
+	printf("string[%d] -> offset: 0x%X (%d), utf16_units: %d, bytes: %d, value: %s\n",
+	       $count, $string_data_off, $string_data_off,
+	       $utf16_units,
+	       $utf16_units + $string_nb_of_bytes,
+	       $data);
     }
 }
 
@@ -676,6 +754,7 @@ usage if (! GetOptions('help|?' => \$help,
 		       'patch-string-data=s' => \$patch_string_data,
 		       'add-link-data|a=s' => \$add_link_data,
 		       'show-strings' => \$show_strings,
+		       'rename-strings' => \$rename_strings,
 		       'method|m=s' => \$methodname,
 		       'class|c=s' => \$classname,
 		       'input|i=s' => \$dex->{filename} )
@@ -693,12 +772,13 @@ if (defined $detect && ($detect eq 1)) {
     check_missing_method_idx(\*FILE, $classname, $methodname);
 }
 if (defined $show_strings) {
-    read_all_strings(\*FILE);
+    read_all_strings(\*FILE, 0);
 }
 close( FILE );
 
 if ((defined $patch_string_offset && defined $patch_string_data) ||
     (defined $add_link_data) ||
+    (defined $rename_strings) ||
     (defined $patch_offset && defined $patch_access_flags && 
      defined $patch_code_offset && defined $patch_method_idx_diff)) {
     print "Patching DEX...\n";
@@ -707,6 +787,10 @@ if ((defined $patch_string_offset && defined $patch_string_data) ||
 
     if (defined $add_link_data) {
 	add_link(\*FILE, $add_link_data);
+    }
+
+    if (defined $rename_strings) {
+	read_all_strings(\*FILE, 1);
     }
 
     if (defined $patch_string_offset && defined $patch_string_data) {
