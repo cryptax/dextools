@@ -438,7 +438,7 @@ class Dex:
                     patched[idx+24:idx+28] = struct.pack('<L', class_data_off + len(data))
                 if verbose:
                     print '\t\tclass_data_off=%d --> %d' % (class_data_off, class_data_off+len(data))
-            if static_values_off > 0 and offset < static_value_off:
+            if static_values_off > 0 and offset < static_values_off:
                 if offset < (idx+28):
                     patched[idx+28+len(data):idx+32+len(data)] = struct.pack('<L', static_values_off + len(data))
                 else:
