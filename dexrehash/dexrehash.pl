@@ -15,19 +15,20 @@ use Digest::SHA;
 use Digest::Adler32;
 
 my $help;
-my $rehash;
+my $fix;
 my $checkhash;
 my $dex = {
     filename => '',
     magic => '',
     checksum => '',
-    sha1 => ''
+    sha1 => '',
+    file_size => 0
 };
 
 sub usage {
-    print "./dexrehash.pl --input <dex filename> [--rehash]\n";
+    print "./dexrehash.pl --input <dex filename> [--fix]\n";
     print "\t--input\t: Dalvik Executable filename\n";
-    print "\t--rehash\t: re-compute sha1 and checksum of DEX \n";
+    print "\t--fix\t: re-compute file size, sha1 and checksum of DEX \n";
     print "\t AND updates the current file with those values.\n";
     print "\t Beware, that overwrites the current file!\n";
     exit(0);
@@ -90,10 +91,11 @@ sub get_sha1 {
     my $fh = shift;
     my $data;
 
-    read( $fh, $data, 20) or die "cant read checksum from file: $!";
+    read( $fh, $data, 20) or die "cant read sha1 from file: $!";
     my $hex = unpack( 'H*', $data );
     return $hex;
 }
+
 
 sub write_sha1 {
     my $filename = shift;
@@ -111,6 +113,35 @@ sub write_sha1 {
 
     close( FILE );
 }
+
+sub get_file_size {
+    my $fh = shift;
+    my $data;
+
+    read( $fh, $data, 4 ) or die "cant read filesize from file: $!";
+    my $value = unpack( 'I', $data );
+
+    return $value;
+}
+
+sub write_file_size {
+    my $filename = shift;
+    my $filesize = shift;
+    my @sizebytes = pack('I', $filesize);
+    my $byte;
+
+    open( FILE, "+<$filename" ) or die "cant open file '$filename': $!";
+    binmode FILE, ":bytes";
+    seek( FILE, 8+4+20, 0);
+
+    foreach $byte (@sizebytes) {
+	print( FILE $byte ) or die "cant write file size in file: $!";
+    }
+
+    close( FILE );
+}
+    
+    
 
 sub compute_dex_sha1 {
     my $filename = shift;
@@ -187,7 +218,7 @@ sub write_uleb128 {
 # -------------- Main ------------------
 usage if (! GetOptions('help|?' => \$help,
 		       'input|i=s' => \$dex->{filename},
-		       'rehash|r' => \$rehash
+		       'fix|f' => \$fix
 	  )
 	  or defined $help
 	  or $dex->{filename} eq '' );
@@ -198,23 +229,32 @@ binmode FILE;
 $dex->{magic} = get_magic( \*FILE, $dex->{filename} );
 $dex->{checksum} = ltob( get_checksum( \*FILE, $dex->{filename} ) );
 $dex->{sha1} = get_sha1( \*FILE, $dex->{filename} );
+$dex->{file_size} = get_file_size(\*FILE, $dex->{filename} );
 close( FILE );
 
 print "Read from file:\n";
 print "Magic   : $dex->{magic}\n";
 print "Checksum: $dex->{checksum}\n";
 print "SHA1    : $dex->{sha1}\n";
+print "File size: $dex->{file_size}\n";
 
-if (defined $rehash) {
+if (defined $fix) {
+    print "Writing:\n";
+    
+    my $file_size = -s $dex->{filename};
+    if ($file_size != $dex->{file_size}) {
+	print "File size: $file_size\n";
+	write_file_size( $dex->{filename}, $file_size );
+    }
+    
     my $new_sha1 = compute_dex_sha1( $dex->{filename} );
     write_sha1( $dex->{filename}, $new_sha1 );
+    print "SHA1    : $new_sha1\n";
     
     my $new_checksum = compute_dex_checksum( $dex->{filename} );
     write_checksum( $dex->{filename}, $new_checksum );
-
-    print "Writing:\n";
     print "Checksum: $new_checksum\n";
-    print "SHA1    : $new_sha1\n";
+
 }
 
 exit(1);
