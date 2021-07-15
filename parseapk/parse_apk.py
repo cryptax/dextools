@@ -153,15 +153,18 @@ def parse_signing_block(data, magic_offset):
     current_offset = begin_offset + 8
     while current_offset < magic_offset - 8:
         print "\t----- Pair -----"
-        pair_id = struct.unpack("<L", data[current_offset:current_offset+4])[0]
-        print "\tID: 0x%08X" % (pair_id)
-        pair_length = struct.unpack("<L", data[current_offset+4:current_offset+8])[0]
+        pair_length = struct.unpack("<Q", data[current_offset:current_offset+8])[0]
         print "\tValue Length: %d" % (pair_length)
+        pair_id = struct.unpack("<L", data[current_offset+8:current_offset+12])[0]
+        print "\tID: 0x%08X" % (pair_id)
         if pair_id == 0x7109871a:
             print "\tAPK Signature Scheme v2"
-            parse_sigv2(data, current_offset+4, pair_length)
+            parse_sigv2(data, current_offset+12, pair_length-4)
         
         current_offset = current_offset + 8 + pair_length
+
+    if current_offset != magic_offset - 8:
+        print "WARNING: pair sizes do not add up: current_offset=%d, magic_offset=%d" % (current_offset, magic_offset)
 
     print "\033[0m"
     
@@ -262,7 +265,24 @@ def parse_certificates(data, offset, length):
         
     if i != length:
         print "WARNING: parse_certificates() error: i=%d length=%d" % (i, length)
+
+
+def parse_attributes(data, offset, length):
+    '''parses a sequence of attributes (inside APK Signature Scheme v2 Block)
+    '''
+    i = 0
+    nb = 1
+    while i < length:
+        attribute_length, attribute_id = struct.unpack("<LL", data[offset+i: offset+i+8])
+        print "\t\t\tAttribute #%d length=%d id=%d" % (nb, attribute_length, attribute_id)
+        attribute = data[offset+8+i:offset+8+i+attribute_length-4]
+        print "\t\t\tValue: ", attribute.encode('hex')
+        nb = nb + 1
+        i = i + 4 + attribute_length
         
+    if i != length:
+        print "WARNING: parse_attributes() error: i=%d length=%d" % (i, length)
+
 
 def parse_signed_data(data, offset):
     '''parses a length prefixed signed data (inside APK Signature Scheme v2 Block)
@@ -290,9 +310,13 @@ def parse_signed_data(data, offset):
     # sequence of attributes
     total_attributes_length = struct.unpack("<L", data[offset+12+total_digests_length+total_certificates_length:offset+16+total_digests_length+total_certificates_length])[0]
     print "\t\t\t\tTotal attributes length: ", total_attributes_length
-    # we are not showing the attributes
+    parse_attributes(data, offset+16+total_digests_length+total_certificates_length, total_attributes_length)
 
-    return 16+total_digests_length+total_certificates_length
+    i = 16+total_digests_length+total_certificates_length+total_attributes_length
+    if i != length:
+        print "WARNING: parse_signed_data() error: i=%d length=%d" % (i, length)
+
+    return length + 4
     
 
 def parse_sigv2(data, offset, length):
